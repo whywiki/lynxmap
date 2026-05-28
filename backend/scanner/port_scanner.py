@@ -8,7 +8,9 @@ import os
 # We go up two levels (scanner -> backend -> root) to import our models
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.scan_result import PortResult, PortState, ScanResult
+from models.scan_result import PortResult, PortState, ScanResult, Service
+
+from scanner.banner_grabber import grab_banner
 
 
 # --- Constants ---
@@ -118,11 +120,26 @@ async def scan_host(
     end_time = datetime.now()
     open_ports = [r for r in clean_results if r.state == PortState.OPEN]
 
-    # Print open ports to terminal as we go
-    for port_result in open_ports:
-        print(f"[+] Port {port_result.port}/tcp OPEN")
+    # --- Banner grabbing ---
+    # Grab banners concurrently for each banner
+    print(f"[*] Grabbing banners for {len(open_ports)} open ports...")
 
-    print(f"[*] Scan complete in {(end_time - start_time).seconds}s - "
+    banner_tasks = [
+        grab_banner(target, port_result.port)
+        for port_result in open_ports
+    ]
+
+    banners = await asyncio.gather(*banner_tasks, return_exceptions=True)
+
+    # Attach banners to their port results
+    for port_result, banner in zip(open_ports, banners):
+        if isinstance(banner, Service):
+            port_result.service = banner
+            version_str = f" ({banner.version})" if banner.version else ""
+            print(f"[+] Port {port_result.port}/tcp OPEN - {banner.name}{version_str}")
+        else:
+            print(f"[+] Port {port_result.port}/tcp OPEN - banner grab failed")
+            print(f"[*] Scan complete in {(end_time - start_time).seconds}s - "
           f"{len(open_ports)} open ports found")
 
     return ScanResult(
