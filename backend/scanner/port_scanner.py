@@ -135,3 +135,19 @@ async def scan_host(
         # Only return open and filtered ports
         results=[r for r in clean_results if r.state != PortState.CLOSED]
     )
+
+
+# --- Entry point for testing ---
+
+if __name__ == "__main__":
+    import json
+
+    # scanme.nmap.org is a host Nmap provides specifically for
+    # people to legally test scanners against
+    target = "scanme.nmap.org"
+
+    result = asyncio.run(scan_host(target, port_start=1, port_end=1024))
+
+    # Print the full result as JSON
+    # exclude_none=True cleans up the output by hiding null fields
+    print(result.model_dump_json(indent=2, exclude_none=True))
