@@ -25,6 +25,22 @@ MAX_RESULTS = 20
 # With key:    50 requests per 30s -> wait 0.6s between requests
 REQUEST_DELAY = 0.6  # seconds between API calls
 
+# CPE vendor/product mappings for common services
+# Format: "Our service name" -> (vendor, product)
+# These match NVD's official CPE naming conventions
+CPE_MAPPINGS = {
+    "openssh":      ("openbsd",  "openssh"),
+    "apache httpd": ("apache",   "http_server"),
+    "nginx":        ("nginx",    "nginx"),
+    "mysql":        ("mysql",    "mysql"),
+    "postgresql":   ("postgresql", "postgresql"),
+    "proftpd":      ("proftpd", "proftpd"),
+    "vsftpd":       ("vsftpd",  "vsftpd"),
+    "microsoft iis":("microsoft", "internet_information_services"),
+    "samba":        ("samba",   "samba"),
+    "openssl":      ("openssl", "openssl"),
+}
+
 
 # --- In-memory cache ---
 # Key: "ServiceName version" e.g. "OpenSSH 6.6.1p1"
@@ -153,7 +169,6 @@ def _parse_cve_item(item: dict) -> CVE | None:
     except Exception:
         return None
 
-
 async def fetch_cves_for_service(
     service_name: str,
     version: str | None,
@@ -162,7 +177,10 @@ async def fetch_cves_for_service(
     """
     Query the NVD API for CVEs affecting a given service and version.
 
-    Returns a list of CVE objects sorted by severity (worst first).
+    Strategy:
+    1. Try CPE-based query first (version-aware, most accurate)
+    2. Fall back to keyword search if CPE returns nothing
+
     Results are cached to avoid redundant API calls.
     """
 
@@ -176,65 +194,53 @@ async def fetch_cves_for_service(
                   f"{len(cached_cves)} CVEs (cached)")
             return cached_cves
 
-    # Build search query
-    # We search for "ServiceName version" e.g. "OpenSSH 6.6.1"
-    # If no version, just search by service name
-    if version:
-        # Strip trailing letters from version for broader matching
-        # "6.6.1p1" - "6.6.1" catches more results
-        clean_version = version.split("p")[0].split("-")[0]
-        query = f"{service_name} {clean_version}"
-    else:
-        query = service_name
-
-    print(f"  [nvd] Querying: '{query}'")
-
-    # Rate limiting - wait before making request
     await asyncio.sleep(delay)
 
     api_key = os.environ.get("NVD_API_KEY", "")
+    headers = {"apiKey": api_key} if api_key else {}
 
-    headers = {}
-    if api_key:
-        headers["apiKey"] = api_key
-
-    params = {
-        "keywordSearch": query,
-        "resultsPerPage": MAX_RESULTS,
-    }
-
-    try:
-        # httpx.AsyncClient is the async HTTP client
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(
-                NVD_BASE_URL,
-                params=params,
-                headers=headers
-            )
-
-            # Raise an exception for 4xx/5xx responses
-            response.raise_for_status()
-
-            data = response.json()
-
-    except httpx.HTTPStatusError as e:
-        print(f"  [nvd] HTTP error {e.response.status_code} for '{query}'")
-        return []
-    except httpx.RequestError as e:
-        print(f"  [nvd] Request failed for '{query}': {e}")
-        return []
-    except Exception as e:
-        print(f"  [nvd] Unexpected error for '{query}': {e}")
-        return []
-
-    # Parse results
-    vulnerabilities = data.get("vulnerabilities", [])
     cves = []
 
-    for item in vulnerabilities:
-        cve = _parse_cve_item(item)
-        if cve:
-            cves.append(cve)
+    # --- Strategy 1: CPE query ---
+    service_key = service_name.lower()
+    if version and service_key in CPE_MAPPINGS:
+        vendor, product = CPE_MAPPINGS[service_key]
+
+        # Clean version — strip ubuntu/debian packaging suffixes
+        # "6.6.1p1" stays as is, "2.4.7+dfsg" → "2.4.7"
+        clean_version = version.split("+")[0].split("~")[0]
+
+        cpe_name = f"cpe:2.3:a:{vendor}:{product}:{clean_version}:*:*:*:*:*:*:*"
+
+        print(f"  [nvd] CPE query: '{cpe_name}'")
+
+        params = {
+            "cpeName": cpe_name,
+            "resultsPerPage": MAX_RESULTS,
+        }
+
+        cves = await _do_nvd_request(params, headers)
+        print(f"  [nvd] CPE found {len(cves)} CVEs")
+
+    # --- Strategy 2: Keyword fallback ---
+    # Triggers if CPE found nothing OR service has no CPE mapping
+    if not cves:
+        if version:
+            clean_version = version.split("p")[0].split("-")[0].split("+")[0]
+            query = f"{service_name} {clean_version}"
+        else:
+            query = service_name
+
+        print(f"  [nvd] Keyword fallback: '{query}'")
+
+        params = {
+            "keywordSearch": query,
+            "resultsPerPage": MAX_RESULTS,
+        }
+
+        await asyncio.sleep(delay)  # extra delay for second request
+        cves = await _do_nvd_request(params, headers)
+        print(f"  [nvd] Keyword found {len(cves)} CVEs")
 
     # Sort by severity — CRITICAL first
     severity_order = {
@@ -246,8 +252,44 @@ async def fetch_cves_for_service(
     }
     cves.sort(key=lambda c: severity_order.get(c.severity, 5))
 
-    # Store in cache
     _cache[key] = (cves, datetime.now())
+    return cves
 
-    print(f"  [nvd] Found {len(cves)} CVEs for '{query}'")
+
+async def _do_nvd_request(
+    params: dict,
+    headers: dict
+) -> list[CVE]:
+    """
+    Execute a single NVD API request and return parsed CVEs.
+    Extracted so both CPE and keyword strategies share the same logic.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(
+                NVD_BASE_URL,
+                params=params,
+                headers=headers
+            )
+            response.raise_for_status()
+            data = response.json()
+
+    except httpx.HTTPStatusError as e:
+        print(f"  [nvd] HTTP error {e.response.status_code}")
+        return []
+    except httpx.RequestError as e:
+        print(f"  [nvd] Request failed: {e}")
+        return []
+    except Exception as e:
+        print(f"  [nvd] Unexpected error: {e}")
+        return []
+
+    vulnerabilities = data.get("vulnerabilities", [])
+    cves = []
+
+    for item in vulnerabilities:
+        cve = _parse_cve_item(item)
+        if cve:
+            cves.append(cve)
+
     return cves
