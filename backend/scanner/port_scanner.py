@@ -12,6 +12,8 @@ from models.scan_result import PortResult, PortState, ScanResult, Service
 
 from scanner.banner_grabber import grab_banner
 
+from vulns.cve_matcher import enrich_with_cves
+
 
 # --- Constants ---
 
@@ -142,17 +144,24 @@ async def scan_host(
             print(f"[*] Scan complete in {(end_time - start_time).seconds}s - "
           f"{len(open_ports)} open ports found")
 
-    return ScanResult(
-        scan_id=scan_id,
-        target=target,
-        start_time=start_time,
-        end_time=end_time,
-        ports_scanned=len(ports),
-        open_ports=len(open_ports),
-        # Only return open and filtered ports
-        results=[r for r in clean_results if r.state != PortState.CLOSED]
-    )
+    scan = ScanResult(
+            scan_id=scan_id,
+            target=target,
+            start_time=start_time,
+            end_time=end_time,
+            ports_scanned=len(ports),
+            open_ports=len(open_ports),
+            # Only return open and filtered ports
+            results=[r for r in clean_results if r.state != PortState.CLOSED]
+        )
 
+    # Enrich open ports with CVE data from NVD
+    scan = await enrich_with_cves(scan)
+
+    # Update end time to include enrichment time
+    scan.end_time = datetime.now()
+
+    return scan
 
 # --- Entry point for testing ---
 
