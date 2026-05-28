@@ -28,12 +28,15 @@
     --ring: 212.7 26.8% 83.9%;
     --radius: 0.5rem;
   }
+
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
+
   html {
     @apply font-sans;
   }
