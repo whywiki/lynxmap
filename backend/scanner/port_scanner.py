@@ -163,17 +163,33 @@ async def scan_host(
 
     return scan
 
-# --- Entry point for testing ---
+async def run_scan(
+    target: str,
+    port_start: int = 1,
+    port_end: int = 1024,
+    timeout: float = DEFAULT_TIMEOUT
+) -> ScanResult:
+    """
+    Main entry point for running a full scan.
+    This is what the API and CLI will call.
+    Runs port scan -> banner grabbing → CVE enrichment.
+    """
+    # probably more usefull later idk
+    return await scan_host(
+        target=target,
+        port_start=port_start,
+        port_end=port_end,
+        timeout=timeout
+    )
 
+# --- Direct execution for testing ---
 if __name__ == "__main__":
     import json
 
-    # scanme.nmap.org is a host Nmap provides specifically for
-    # people to legally test scanners against
-    target = "scanme.nmap.org"
+    result = asyncio.run(run_scan(
+        target="scanme.nmap.org",
+        port_start=1,
+        port_end=1024
+    ))
 
-    result = asyncio.run(scan_host(target, port_start=1, port_end=1024))
-
-    # Print the full result as JSON
-    # exclude_none=True cleans up the output by hiding null fields
     print(result.model_dump_json(indent=2, exclude_none=True))
