@@ -1,13 +1,31 @@
-# Virtual environment
+# Python virtual environment
 venv/
 
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python
 
 # Environment variables
 .env
 
+# Node modules
+frontend/node_modules/
+
+# Frontend build output
+frontend/dist/
+
 # OS clutter
 .DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+.idea/
+
+# Python egg/dist
+*.egg-info/
+dist/
+build/
