@@ -19,7 +19,7 @@ A network vulnerability scanner built for educational purposes. Scans a target h
 - CVE lookup via NVD API with CPE-based version matching
 - REST API with background scan jobs and polling
 - CLI interface with rich terminal output
-- Web dashboard for visual results
+- Web interface for visual results
 
 ---
 
