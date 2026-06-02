@@ -10,33 +10,55 @@ const INPUT_CLS =
 
 export function ScanForm({ onSubmit, isScanning, className }) {
   const [target, setTarget] = useState('');
-  const [portStart, setPortStart] = useState(1);
-  const [portEnd, setPortEnd] = useState(1024);
-  const [timeout, setTimeoutVal] = useState(1);
+  const [portStart, setPortStart] = useState('1');
+  const [portEnd, setPortEnd] = useState('1024');
+  const [timeout, setTimeoutVal] = useState('1');
   const [error, setError] = useState(null);
+
+  function sanitizeNumericInput(value) {
+    return value.replace(/\D/g, '');
+  }
+
+  function parseNumericValue(value) {
+    if (value.trim() === '') return NaN;
+    return Number(value);
+  }
 
   function handleSubmit(e) {
     e.preventDefault();
     setError(null);
 
+    const parsedPortStart = parseNumericValue(portStart);
+    const parsedPortEnd = parseNumericValue(portEnd);
+    const parsedTimeout = parseNumericValue(timeout);
+
     if (!target.trim()) {
       setError('Target is required.');
       return;
     }
-    if (portStart < 1 || portStart > 65535) {
+    if (!Number.isInteger(parsedPortStart) || parsedPortStart < 1 || parsedPortStart > 65535) {
       setError('Port start must be between 1 and 65535.');
       return;
     }
-    if (portEnd < portStart || portEnd > 65535) {
+    if (
+      !Number.isInteger(parsedPortEnd) ||
+      parsedPortEnd < parsedPortStart ||
+      parsedPortEnd > 65535
+    ) {
       setError('Port end must be >= port start and <= 65535.');
       return;
     }
-    if (timeout <= 0 || timeout > 300) {
+    if (!Number.isInteger(parsedTimeout) || parsedTimeout <= 0 || parsedTimeout > 300) {
       setError('Port wait must be between 1 and 300 seconds.');
       return;
     }
 
-    onSubmit({ target: target.trim(), port_start: portStart, port_end: portEnd, timeout });
+    onSubmit({
+      target: target.trim(),
+      port_start: parsedPortStart,
+      port_end: parsedPortEnd,
+      timeout: parsedTimeout,
+    });
   }
 
   return (
@@ -55,9 +77,9 @@ export function ScanForm({ onSubmit, isScanning, className }) {
       <div className="p-4">
         <form onSubmit={handleSubmit} aria-label="Scan configuration">
           {/* Inputs row */}
-          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,2.8fr)_repeat(3,minmax(0,1fr))] gap-3 items-end">
             {/* Target */}
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 min-w-0">
               <label
                 htmlFor="target"
                 className="block text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground font-mono"
@@ -73,12 +95,12 @@ export function ScanForm({ onSubmit, isScanning, className }) {
                 disabled={isScanning}
                 autoComplete="off"
                 spellCheck={false}
-                className={INPUT_CLS}
+                className={cn(INPUT_CLS, 'w-full')}
               />
             </div>
 
             {/* Port Start */}
-            <div className="space-y-1.5 w-24">
+            <div className="space-y-1.5 min-w-0">
               <label
                 htmlFor="port-start"
                 className="block text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground font-mono"
@@ -87,18 +109,18 @@ export function ScanForm({ onSubmit, isScanning, className }) {
               </label>
               <Input
                 id="port-start"
-                type="number"
-                min={1}
-                max={65535}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={portStart}
-                onChange={(e) => setPortStart(Number(e.target.value))}
+                onChange={(e) => setPortStart(sanitizeNumericInput(e.target.value))}
                 disabled={isScanning}
-                className={cn(INPUT_CLS, 'text-center')}
+                className={cn(INPUT_CLS, 'text-center w-full')}
               />
             </div>
 
             {/* Port End */}
-            <div className="space-y-1.5 w-24">
+            <div className="space-y-1.5 min-w-0">
               <label
                 htmlFor="port-end"
                 className="block text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground font-mono"
@@ -107,18 +129,18 @@ export function ScanForm({ onSubmit, isScanning, className }) {
               </label>
               <Input
                 id="port-end"
-                type="number"
-                min={1}
-                max={65535}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={portEnd}
-                onChange={(e) => setPortEnd(Number(e.target.value))}
+                onChange={(e) => setPortEnd(sanitizeNumericInput(e.target.value))}
                 disabled={isScanning}
-                className={cn(INPUT_CLS, 'text-center')}
+                className={cn(INPUT_CLS, 'text-center w-full')}
               />
             </div>
 
             {/* Port wait */}
-            <div className="space-y-1.5 w-24">
+            <div className="space-y-1.5 min-w-0">
               <label
                 htmlFor="timeout"
                 className="block text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground font-mono"
@@ -127,14 +149,13 @@ export function ScanForm({ onSubmit, isScanning, className }) {
               </label>
               <Input
                 id="timeout"
-                type="number"
-                min={1}
-                max={300}
-                step={1}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={timeout}
-                onChange={(e) => setTimeoutVal(Number(e.target.value))}
+                onChange={(e) => setTimeoutVal(sanitizeNumericInput(e.target.value))}
                 disabled={isScanning}
-                className={cn(INPUT_CLS, 'text-center')}
+                className={cn(INPUT_CLS, 'text-center w-full')}
               />
             </div>
           </div>
