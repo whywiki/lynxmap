@@ -69,6 +69,14 @@ def _print_results_table(result: ScanResult, show_filtered: bool) -> None:
     Print scan results as a formatted Rich table to the terminal.
     This is the human-readable output mode.
     """
+    # Add OS guess to header if available
+    os_line = ""
+    if result.os_guess:
+        os_line = (
+            f"\n[bold]OS Guess:[/bold] {result.os_guess.os_name} "
+            f"[dim](TTL={result.os_guess.ttl_observed}, "
+            f"confidence={result.os_guess.confidence})[/dim]"
+        )
 
     # --- Header panel ---
     header_text = (
@@ -78,6 +86,7 @@ def _print_results_table(result: ScanResult, show_filtered: bool) -> None:
         f"[bold]Open ports:[/bold] {result.open_ports}\n"
         f"[bold]Duration:[/bold] "
         f"{(result.end_time - result.start_time).seconds}s"
+        f"{os_line}"
     )
 
     console.print(Panel(
