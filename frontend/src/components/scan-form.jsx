@@ -89,7 +89,7 @@ export function ScanForm({ onSubmit, isScanning, className }) {
               <Input
                 id="target"
                 type="text"
-                placeholder="192.168.1.1 / scanme.nmap.org"
+                placeholder="192.168.1.1 / host.docker.internal"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
                 disabled={isScanning}

@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      NVD_API_KEY: ${NVD_API_KEY:-}
+      HOST: 0.0.0.0
+      PORT: 8000
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    volumes:
+      - ./backend:/app/backend
+    ports:
+      - '8000:8000'
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    volumes:
+      - ./frontend:/app/frontend
+      - frontend-node-modules:/app/frontend/node_modules
+    ports:
+      - '5173:5173'
+    depends_on:
+      - backend
+
+  cli:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      NVD_API_KEY: ${NVD_API_KEY:-}
+    working_dir: /app/backend
+    entrypoint: ["python", "cli.py"]
+    profiles:
+      - tools
+
+volumes:
+  frontend-node-modules:

@@ -14,6 +14,13 @@ from models.scan_result import ScanRequest, ScanResult, PortState
 from scanner.port_scanner import run_scan
 
 
+def _parse_cors_origins(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return ['http://localhost:5173', 'http://127.0.0.1:5173']
+    return [origin.strip() for origin in raw_value.split(',') if origin.strip()]
+CORS_ORIGINS = _parse_cors_origins(os.getenv('CORS_ORIGINS'))
+
+
 # --- App setup ---
 
 app = FastAPI(
@@ -26,7 +33,7 @@ app = FastAPI(
 # browsers block cross-origin requests by default
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

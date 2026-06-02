@@ -3,14 +3,22 @@ import asyncio
 import os
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.scan_result import CVE, Severity
 from dotenv import load_dotenv
 
-# Load .env file so os.environ can see NVD_API_KEY
-load_dotenv()
+
+def _load_env_files() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    load_dotenv(project_root / '.env', override=False)
+    load_dotenv(project_root / 'backend' / '.env', override=False)
+
+
+# Load env files so os.environ can see NVD_API_KEY in both host and container runs
+_load_env_files()
 
 
 # --- Config ---
