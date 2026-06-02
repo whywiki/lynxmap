@@ -20,6 +20,7 @@ A network vulnerability scanner built for educational purposes. Scans a target h
 - REST API with background scan jobs and polling
 - CLI interface with rich terminal output
 - Web interface for visual results
+- OS detection via TTL fingerprinting (ping-based)
 
 ---
 
@@ -69,6 +70,8 @@ Start the API:
 uvicorn main:app --reload --port 8000
 ```
 
+The API exposes interactive documentation at `http://localhost:8000/docs`
+
 ### Frontend
 
 ```bash
@@ -97,6 +100,12 @@ python cli.py scan 192.168.1.1 --output json
 
 # Show filtered ports
 python cli.py scan 192.168.1.1 --show-filtered
+
+# Custom timeout per port
+python cli.py scan 192.168.1.1 --timeout 0.5
+
+# Show version
+python cli.py version
 ```
 
 ---
