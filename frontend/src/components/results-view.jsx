@@ -95,8 +95,8 @@ function CveTable({ cves, serviceName, version }) {
                   <td className="px-4 py-3 font-mono whitespace-nowrap text-foreground">
                     {cve.cvss_score != null ? Number(cve.cvss_score).toFixed(1) : 'N/A'}
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground leading-relaxed">
-                    <span className="line-clamp-2">{cve.description}</span>
+                  <td className="px-4 py-3 text-muted-foreground leading-relaxed whitespace-normal wrap-break-word align-top">
+                    <span>{cve.description}</span>
                   </td>
                 </tr>
               ))}

@@ -127,7 +127,11 @@ export default function Dashboard() {
 
       {/* Main content */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-8 py-10 space-y-8">
+        <div
+          className={
+            showForm ? 'w-full px-8 py-10 space-y-8' : 'max-w-5xl mx-auto px-8 py-10 space-y-8'
+          }
+        >
           {/* ── Idle / new-scan state ── */}
           {showForm && (
             <div className="space-y-8">
@@ -143,7 +147,7 @@ export default function Dashboard() {
                 scan to inspect open ports and known vulnerabilities.
               </p>
               <div className="pt-4">
-                <ScanForm onSubmit={handleSubmit} isScanning={false} className="max-w-3xl" />
+                <ScanForm onSubmit={handleSubmit} isScanning={false} className="w-full" />
               </div>
             </div>
           )}
