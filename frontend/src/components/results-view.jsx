@@ -214,6 +214,14 @@ export function ResultsView({ scan }) {
                     value={duration}
                     sub={`${scan.timeout ?? '—'}s per port before filtering`}
                 />
+                <StatCard
+                    label="OS Guess"
+                    value={scan.os_guess ? scan.os_guess.os_name : '—'}
+                    sub={scan.os_guess
+                        ? `TTL ${scan.os_guess.ttl_observed} · ${scan.os_guess.confidence} confidence`
+                        : 'ICMP blocked or no response'
+                    }
+                />
             </div>
 
             {/* Ports table */}
