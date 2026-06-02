@@ -25,6 +25,27 @@ A network vulnerability scanner built for educational purposes. Scans a target h
 
 ## Setup
 
+### Docker
+
+This repo ships with a simple Docker Compose setup for local development.
+
+1. Copy [.env.example](.env.example) to `.env` and set `NVD_API_KEY` if you want CVE enrichment.
+2. Start the stack:
+
+```bash
+docker compose up --build
+```
+
+3. Open the frontend at `http://localhost:5173` and the backend at `http://localhost:8000`.
+
+4. To scan the host machine from inside Docker, use the machine IP or `host.docker.internal` as the target. Avoid `127.0.0.1`, because that would point at the container itself.
+
+5. To run the CLI in a container, use:
+
+```bash
+docker compose --profile tools run --rm cli scan scanme.nmap.org --ports 1-1024
+```
+
 ### Backend
 
 ```bash
@@ -34,7 +55,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root, or in `backend/.env` if you prefer running the Python tools from inside `backend/`:
 
 ```
 NVD_API_KEY=your_key_here

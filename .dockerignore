@@ -1,0 +1,14 @@
+.git
+.vscode
+.idea
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv
+backend/venv
+frontend/node_modules
+frontend/dist
+.DS_Store
+*.log

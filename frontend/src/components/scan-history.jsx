@@ -143,7 +143,7 @@ export function ScanHistory({ scans, activeScanId, onSelect, onNewScan }) {
 
       {/* Footer */}
       <div className="px-4 py-3 border-t border-sidebar-border">
-        <p className="text-[10px] font-mono text-muted-foreground/40 leading-relaxed">
+        <p className="text-[10px] font-mono text-muted-foreground/80 leading-relaxed">
           Session-only history.
           <br />
           Scans cleared on reload.

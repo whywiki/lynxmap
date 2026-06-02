@@ -297,7 +297,7 @@ def scan(
         # Always print the dashboard URL hint at the end
         console.print(
             f"\n[dim]View in dashboard: "
-            f"http://localhost:3000 "
+            f"http://localhost:5173 "
             f"(start the frontend first)[/dim]\n"
         )
 
