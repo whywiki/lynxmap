@@ -12,6 +12,8 @@ from models.scan_result import PortResult, PortState, ScanResult, Service
 
 from scanner.banner_grabber import grab_banner
 
+from scanner.os_fingerprint import detect_os
+
 from vulns.cve_matcher import enrich_with_cves
 
 
@@ -99,6 +101,19 @@ async def scan_host(
     # the concurrency limit would have no effect
     semaphore = asyncio.Semaphore(max_concurrent)
 
+    # --- OS Detection ---
+    # Run this first, concurrently with nothing else yet
+    # It's fast (single ping) so it doesn't slow down the scan
+    print(f"[*] Attempting OS detection on {target}...")
+    os_guess = await detect_os(target)
+
+    if os_guess:
+        print(f"[*] OS guess: {os_guess.os_name} "
+              f"(TTL={os_guess.ttl_observed}, "
+              f"confidence={os_guess.confidence})")
+    else:
+        print(f"[*] OS detection failed (host may block ICMP)")
+
     # Build the list of all ports to scan
     ports = range(port_start, port_end + 1)
 
@@ -151,6 +166,7 @@ async def scan_host(
             end_time=end_time,
             ports_scanned=len(ports),
             open_ports=len(open_ports),
+            os_guess=os_guess,
             # Only return open and filtered ports
             results=[r for r in clean_results if r.state != PortState.CLOSED]
         )
