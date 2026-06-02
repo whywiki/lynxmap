@@ -209,7 +209,11 @@ export function ResultsView({ scan }) {
           value={openPorts.length}
           sub={filteredCount > 0 ? `${filteredCount} filtered` : undefined}
         />
-        <StatCard label="Scan Duration" value={duration} sub={`timeout ${scan.timeout ?? '—'}s`} />
+        <StatCard
+          label="Scan Duration"
+          value={duration}
+          sub={`${scan.timeout ?? '—'}s per port before filtering`}
+        />
       </div>
 
       {/* Ports table */}

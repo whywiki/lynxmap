@@ -16,6 +16,7 @@ export default function Dashboard() {
   const pollRef = useRef(null);
 
   const activeScan = scans.find((s) => s.scan_id === activeScanId) ?? null;
+  const displayedScan = activeScan ?? scans[0] ?? null;
   // eslint-disable-next-line no-unused-vars
   const isScanning = activeScan?.status === 'pending' || activeScan?.status === 'running';
 
@@ -42,11 +43,15 @@ export default function Dashboard() {
               status: 'complete',
               ...result,
             });
+            setActiveScanId(scan_id);
+            setShowForm(false);
             return; // stop polling
           }
 
           if (data.status === 'error') {
             updateScan(scan_id, { status: 'error', error: data.error });
+            setActiveScanId(scan_id);
+            setShowForm(false);
             return; // stop polling
           }
 
@@ -153,43 +158,49 @@ export default function Dashboard() {
           )}
 
           {/* ── Active scan view ── */}
-          {!showForm && activeScan && (
+          {!showForm && displayedScan && (
             <div className="space-y-6">
               {/* In-progress or error */}
-              {(activeScan.status === 'pending' ||
-                activeScan.status === 'running' ||
-                activeScan.status === 'error') && (
+              {(displayedScan.status === 'pending' ||
+                displayedScan.status === 'running' ||
+                displayedScan.status === 'error') && (
                 <>
                   <p className="text-[11px] font-mono uppercase tracking-[0.2em] text-muted-foreground/60">
-                    // Scanning {activeScan.target}
+                    // Scanning {displayedScan.target}
                   </p>
                   <h1 className="text-4xl font-bold tracking-tight leading-none font-mono">
-                    {activeScan.target}
+                    {displayedScan.target}
                   </h1>
                   <p className="text-sm font-mono text-muted-foreground">
-                    ports {activeScan.port_range_start}-{activeScan.port_range_end} · timeout{' '}
-                    {activeScan.timeout}s
+                    ports {displayedScan.port_range_start}-{displayedScan.port_range_end} · port
+                    wait {displayedScan.timeout}s
                   </p>
-                  <ScanStatus scan={activeScan} />
+                  <ScanStatus scan={displayedScan} />
                 </>
               )}
 
               {/* Complete */}
-              {activeScan.status === 'complete' && (
+              {displayedScan.status === 'complete' && (
                 <>
                   <p className="text-[11px] font-mono uppercase tracking-[0.2em] text-muted-foreground/60">
                     // Scan Results
                   </p>
                   <h1 className="text-4xl font-bold tracking-tight leading-none font-mono">
-                    {activeScan.target}
+                    {displayedScan.target}
                   </h1>
                   <p className="text-sm font-mono text-muted-foreground">
-                    ports {activeScan.port_range_start}-{activeScan.port_range_end} · timeout{' '}
-                    {activeScan.timeout}s
+                    ports {displayedScan.port_range_start}-{displayedScan.port_range_end} · port
+                    wait {displayedScan.timeout}s
                   </p>
-                  <ResultsView scan={activeScan} />
+                  <ResultsView scan={displayedScan} />
                 </>
               )}
+            </div>
+          )}
+
+          {!showForm && !displayedScan && (
+            <div className="rounded-md border border-border bg-card px-6 py-8 text-sm text-muted-foreground">
+              No scan is available yet. Start a new scan from the sidebar.
             </div>
           )}
         </div>

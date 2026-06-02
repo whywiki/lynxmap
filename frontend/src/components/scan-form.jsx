@@ -32,7 +32,7 @@ export function ScanForm({ onSubmit, isScanning, className }) {
       return;
     }
     if (timeout <= 0 || timeout > 300) {
-      setError('Timeout must be between 1 and 300 seconds.');
+      setError('Port wait must be between 1 and 300 seconds.');
       return;
     }
 
@@ -117,13 +117,13 @@ export function ScanForm({ onSubmit, isScanning, className }) {
               />
             </div>
 
-            {/* Timeout */}
+            {/* Port wait */}
             <div className="space-y-1.5 w-24">
               <label
                 htmlFor="timeout"
                 className="block text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground font-mono"
               >
-                Timeout · S
+                Port Wait · S
               </label>
               <Input
                 id="timeout"
