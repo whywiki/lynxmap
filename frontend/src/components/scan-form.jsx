@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { AlertTriangle, Play, Loader2 } from 'lucide-react';
+import { AlertTriangle, Play, Loader2, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Shared input class — explicit bg so it matches the dark card bg
@@ -168,10 +168,17 @@ export function ScanForm({ onSubmit, isScanning, className }) {
 
           {/* Footer row */}
           <div className="flex items-center justify-between mt-5 pt-4 border-t border-border">
-            <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
-              <AlertTriangle className="size-3 shrink-0" />
-              Only scan hosts you own or have explicit permission to scan.
-            </p>
+            <div>
+              <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+                <AlertTriangle className="size-3 shrink-0" />
+                Only scan hosts you own or have explicit permission to scan.
+              </p>
+              <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+                <Info className="size-3 shrink-0" />
+                If running in Docker, use <code>host.docker.internal</code> as the target to scan
+                the host machine.
+              </p>
+            </div>
             <Button
               type="submit"
               disabled={isScanning}
