@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    cap_add:
+      - NET_RAW # <- allows ping/ICMP inside the container
     environment:
       NVD_API_KEY: ${NVD_API_KEY:-}
       HOST: 0.0.0.0
@@ -42,4 +44,3 @@ services:
 
 volumes:
   frontend-node-modules:
-
