@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.scan_result import PortResult, PortState, ScanResult, Service
 
-from scanner.banner_grabber import grab_banner
+from scanner.banner_grabber import grab_banner, _well_known_service
 
 from scanner.os_fingerprint import detect_os
 
@@ -78,7 +78,6 @@ async def scan_port(
             # (unreachable host, network down, etc.)
             return PortResult(port=port, state=PortState.CLOSED)
 
-
 async def scan_host(
     target: str,
     port_start: int = 1,
@@ -90,10 +89,8 @@ async def scan_host(
     Scan all ports in range on the target host.
     Returns a complete ScanResult with all PortResults.
     """
-
     scan_id = str(uuid.uuid4())
     start_time = datetime.now()
-
     print(f"[*] Starting scan of {target} - ports {port_start}-{port_end}")
 
     # Create ONE semaphore shared across all port scan tasks
@@ -138,7 +135,7 @@ async def scan_host(
     open_ports = [r for r in clean_results if r.state == PortState.OPEN]
 
     # --- Banner grabbing ---
-    # Grab banners concurrently for each banner
+    # Grab banners concurrently for each open port
     print(f"[*] Grabbing banners for {len(open_ports)} open ports...")
 
     banner_tasks = [
@@ -155,21 +152,31 @@ async def scan_host(
             version_str = f" ({banner.version})" if banner.version else ""
             print(f"[+] Port {port_result.port}/tcp OPEN - {banner.name}{version_str}")
         else:
-            print(f"[+] Port {port_result.port}/tcp OPEN - banner grab failed")
-            print(f"[*] Scan complete in {(end_time - start_time).seconds}s - "
+            # Banner grab failed entirely (connection error, TLS failure, etc.)
+            # Fall back to well-known service name from port number
+            # so the frontend never shows a port with no service info at all
+            port_result.service = Service(
+                name=_well_known_service(port_result.port),
+                raw_banner=None
+            )
+            print(f"[+] Port {port_result.port}/tcp OPEN - "
+                  f"{port_result.service.name} (no banner)")
+
+    # Print summary — this belongs outside the loop, not inside it
+    print(f"[*] Scan complete in {(end_time - start_time).seconds}s - "
           f"{len(open_ports)} open ports found")
 
     scan = ScanResult(
-            scan_id=scan_id,
-            target=target,
-            start_time=start_time,
-            end_time=end_time,
-            ports_scanned=len(ports),
-            open_ports=len(open_ports),
-            os_guess=os_guess,
-            # Only return open and filtered ports
-            results=[r for r in clean_results if r.state != PortState.CLOSED]
-        )
+        scan_id=scan_id,
+        target=target,
+        start_time=start_time,
+        end_time=end_time,
+        ports_scanned=len(ports),
+        open_ports=len(open_ports),
+        os_guess=os_guess,
+        # Only return open and filtered ports — closed ports are noise
+        results=[r for r in clean_results if r.state != PortState.CLOSED]
+    )
 
     # Enrich open ports with CVE data from NVD
     scan = await enrich_with_cves(scan)
