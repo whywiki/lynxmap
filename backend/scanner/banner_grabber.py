@@ -81,7 +81,6 @@ def parse_banner(raw_banner: str) -> tuple[str, str | None]:
     # Nothing matched
     return "Unknown", None
 
-
 async def grab_banner(
     host: str,
     port: int,
@@ -89,84 +88,89 @@ async def grab_banner(
 ) -> Service | None:
     """
     Connect to an open port and attempt to read its service banner.
-
-    Returns a Service object if we got anything useful, None if we failed.
-
-    Strategy:
-    1. Connect
-    2. Wait briefly for a spontaneous banner (talkers)
-    3. If nothing comes send a generic probe (listeners)
-    4. Read response
-    5. Parse service name + version from whatever we got
+    Handles plain TCP, HTTP, and HTTPS (TLS) connections.
     """
 
+    # --- Determine if this port needs TLS ---
+    USE_TLS = port in (443, 8443, 9443)
+
+    # --- Determine the right probe for known listener ports ---
+    # HTTP/1.1 with a real Host header works on far more servers than HTTP/1.0
+    HTTP_PROBE = (
+        f"GET / HTTP/1.1\r\n"
+        f"Host: {host}\r\n"
+        f"User-Agent: Mozilla/5.0\r\n"
+        f"Connection: close\r\n\r\n"
+    ).encode()
+
     try:
-        # Open TCP connection - same as in port_scanner but now we
-        # need both reader and writer to send/receive data
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port),
-            timeout=timeout
-        )
+        # --- Open connection (with or without TLS) ---
+        if USE_TLS:
+            import ssl
+            # create_default_context() sets up TLS but we disable cert
+            # verification — we're scanning, not authenticating
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port, ssl=ssl_ctx),
+                timeout=timeout
+            )
+        else:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=timeout
+            )
 
         raw_banner = ""
 
         try:
-            # --- Step 1: wait for spontaneous banner ---
-            # If nothing comes in 2 seconds the service is a listener
+            # --- Step 1: wait for spontaneous banner (talkers like SSH) ---
             data = await asyncio.wait_for(
                 reader.read(1024),
                 timeout=2.0
             )
-
             if data:
-                # Decode bytes to string
                 raw_banner = data.decode("utf-8", errors="ignore").strip()
 
         except asyncio.TimeoutError:
-            # No spontaneous banner - service is a listener
-            # Send the generic probe and wait for a response
+            # --- Step 2: service is a listener, send probe ---
             try:
-                writer.write(GENERIC_PROBE)
-                await writer.drain()  # flush the write buffer
+                # Use HTTP probe for web ports, generic probe for others
+                probe = HTTP_PROBE if port in (80, 443, 8080, 8443) else GENERIC_PROBE
+                writer.write(probe)
+                await writer.drain()
 
                 data = await asyncio.wait_for(
-                    reader.read(1024),
+                    reader.read(2048),  # larger buffer for HTTP responses
                     timeout=2.0
                 )
-
                 if data:
                     raw_banner = data.decode("utf-8", errors="ignore").strip()
 
             except (asyncio.TimeoutError, Exception):
-                # Still nothing — we tried
                 pass
 
-        # --- Close connection cleanly ---
+        # --- Close cleanly ---
         writer.close()
         try:
             await writer.wait_closed()
         except Exception:
             pass
 
-        # --- Parse whatever we got ---
         if not raw_banner:
-            # Connected successfully but got no data at all
-            # Return a minimal service with just the port info
-            return Service(
-                name=_well_known_service(port),
-                raw_banner=None
-            )
+            return Service(name=_well_known_service(port), raw_banner=None)
 
         service_name, version = parse_banner(raw_banner)
 
         return Service(
             name=service_name,
             version=version,
-            raw_banner=raw_banner[:500]  # cap at 500 chars - banners can be long
+            raw_banner=raw_banner[:500]
         )
 
-    except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
-        # Port was open during scan but connection failed now
+    except (asyncio.TimeoutError, ConnectionRefusedError, OSError, Exception):
         return None
 
 
