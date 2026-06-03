@@ -1,6 +1,10 @@
+<div align="center">
 # LynxMap
+</div>
 
 A network vulnerability scanner built for educational purposes. Scans a target host for open TCP ports, identifies running services via banner grabbing, and cross-references findings against the NVD (National Vulnerability Database) to surface known CVEs.
+
+![LynxMap UI](assets/ui.png)
 
 ---
 
