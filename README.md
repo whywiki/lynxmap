@@ -1,9 +1,20 @@
 <div align="center">
+
 # LynxMap
-</div>
+
+[![Python](https://img.shields.io/badge/Python-3.14-4FC3F7?style=for-the-badge&labelColor=2D2D2D&logo=python&logoColor=white)](https://python.org)
+&nbsp;&nbsp;
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.136-00D4AA?style=for-the-badge&labelColor=2D2D2D&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+&nbsp;&nbsp;
+[![NVD](https://img.shields.io/badge/NVD-CVE_Data-FF6B6B?style=for-the-badge&labelColor=2D2D2D&logo=databricks&logoColor=white)](https://nvd.nist.gov/developers/vulnerabilities)
+&nbsp;&nbsp;
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&labelColor=2D2D2D&logo=react&logoColor=white)](https://react.dev)
 
 A network vulnerability scanner built for educational purposes. Scans a target host for open TCP ports, identifies running services via banner grabbing, and cross-references findings against the NVD (National Vulnerability Database) to surface known CVEs.
 
+</div>
+
+<br>
 ![LynxMap UI](assets/ui.png)
 
 ---
