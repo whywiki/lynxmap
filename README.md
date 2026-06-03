@@ -15,6 +15,7 @@ A network vulnerability scanner built for educational purposes. Scans a target h
 </div>
 
 <br>
+
 ![LynxMap UI](assets/ui.png)
 
 ---
