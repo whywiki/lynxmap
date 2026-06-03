@@ -8,6 +8,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.scan_result import Service
 
+from scanner.service_patterns import SERVICE_PATTERNS
+
 
 # --- Timeout for banner reading ---
 BANNER_TIMEOUT = 3.0
@@ -16,57 +18,6 @@ BANNER_TIMEOUT = 3.0
 # many services respond to this even if
 # they aren't HTTP giving us something to parse
 GENERIC_PROBE = b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n"
-
-
-# --- Service fingerprint patterns ---
-# Each entry is (regex_pattern, service_name)
-# We try these against the raw banner string
-
-SERVICE_PATTERNS = [
-    # SSH - "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6"
-    (r"SSH-[\d.]+-OpenSSH[_\s]([\d.p]+)", "OpenSSH"),
-
-    # Apache - "Apache/2.4.41 (Ubuntu)"
-    (r"Apache/([\d.]+)", "Apache httpd"),
-
-    # Nginx - "nginx/1.18.0"
-    (r"nginx/([\d.]+)", "nginx"),
-
-    # OpenSSL
-    (r"OpenSSL/([\d.]+\w*)", "OpenSSL"),
-
-    # MySQL - "5.7.38-MySQL Community Server"
-    (r"([\d.]+)-MySQL", "MySQL"),
-
-    # PostgreSQL - appears in error banners
-    (r"PostgreSQL\s+([\d.]+)", "PostgreSQL"),
-
-    # ProFTPD / vsftpd / Pure-FTPd
-    (r"ProFTPD\s+([\d.]+)", "ProFTPD"),
-    (r"vsftpd\s+([\d.]+)", "vsftpd"),
-    (r"Pure-FTPd", "Pure-FTPd"),
-
-    # Microsoft IIS
-    (r"Microsoft-IIS/([\d.]+)", "Microsoft IIS"),
-
-    # SMB / Samba
-    (r"Samba\s+([\d.]+)", "Samba"),
-
-    # Generic HTTP server header fallback
-    (r"Server:\s*([^\r\n]+)", "HTTP Server"),
-
-# Embedded/router web servers
-    (r"lighttpd/([\d.]+)", "lighttpd"),
-    (r"GoAhead-Webs", "GoAhead"),
-    (r"GoAhead/([\d.]+)", "GoAhead"),
-    (r"uhttpd", "uhttpd"),
-    (r"mini_httpd/([\d.]+)", "mini_httpd"),
-    (r"RouterOS", "MikroTik RouterOS"),
-    (r"RomPager/([\d.]+)", "RomPager"),    # very old routers, often vulnerable
-    (r"Z-World Rabbit", "Z-World"),
-    (r"Boa/([\d.]+)", "Boa httpd"),        # common in embedded devices
-]
-
 
 def parse_banner(raw_banner: str) -> tuple[str, str | None]:
     """
