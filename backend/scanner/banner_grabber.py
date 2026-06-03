@@ -1,4 +1,5 @@
 import asyncio
+import ssl
 import re
 import sys
 import os
@@ -53,6 +54,17 @@ SERVICE_PATTERNS = [
 
     # Generic HTTP server header fallback
     (r"Server:\s*([^\r\n]+)", "HTTP Server"),
+
+# Embedded/router web servers
+    (r"lighttpd/([\d.]+)", "lighttpd"),
+    (r"GoAhead-Webs", "GoAhead"),
+    (r"GoAhead/([\d.]+)", "GoAhead"),
+    (r"uhttpd", "uhttpd"),
+    (r"mini_httpd/([\d.]+)", "mini_httpd"),
+    (r"RouterOS", "MikroTik RouterOS"),
+    (r"RomPager/([\d.]+)", "RomPager"),    # very old routers, often vulnerable
+    (r"Z-World Rabbit", "Z-World"),
+    (r"Boa/([\d.]+)", "Boa httpd"),        # common in embedded devices
 ]
 
 
@@ -106,7 +118,6 @@ async def grab_banner(
     try:
         # --- Open connection (with or without TLS) ---
         if USE_TLS:
-            import ssl
             # create_default_context() sets up TLS but we disable cert
             # verification — we're scanning, not authenticating
             ssl_ctx = ssl.create_default_context()
@@ -149,7 +160,7 @@ async def grab_banner(
                 if data:
                     raw_banner = data.decode("utf-8", errors="ignore").strip()
 
-            except (asyncio.TimeoutError, Exception):
+            except (asyncio.TimeoutError, OSError):
                 pass
 
         # --- Close cleanly ---
@@ -164,13 +175,24 @@ async def grab_banner(
 
         service_name, version = parse_banner(raw_banner)
 
+        # If we couldn't identify the service from the banner,
+        # at least use the well-known port name rather than "Unknown"
+        # so the user sees "HTTP" instead of nothing useful
+        if service_name == "Unknown":
+            service_name = _well_known_service(port)
+
         return Service(
             name=service_name,
             version=version,
-            raw_banner=raw_banner[:500]
+            raw_banner=raw_banner[:500]  # keep raw banner so user can see what we got
         )
 
-    except (asyncio.TimeoutError, ConnectionRefusedError, OSError, Exception):
+    except (asyncio.TimeoutError, ConnectionRefusedError, OSError, ssl.SSLError):
+        # Expected network failures — silently return None
+        return None
+    except Exception as e:
+        # Something unexpected — log it so we know something is wrong
+        print(f"[!] Unexpected banner grab error on port {port}: {e}")
         return None
 
 
