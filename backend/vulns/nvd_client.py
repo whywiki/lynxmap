@@ -24,7 +24,7 @@ _load_env_files()
 
 NVD_BASE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
-MAX_RESULTS = 20
+MAX_RESULTS = 5
 
 # NVD rate limits (official):
 #   no key  -> 5 requests / 30s -> minimum 6s between requests
@@ -291,7 +291,9 @@ async def fetch_cves_for_service(
     await asyncio.sleep(delay)
 
     api_key = os.environ.get("NVD_API_KEY", "")
-    headers = {"apiKey": api_key} if api_key else {}
+    headers = {"User-Agent": "LynxMap/0.1.0"}
+    if api_key:
+        headers["apiKey"] = api_key
 
     service_key = service_name.lower()
     mapping = CPE_MAPPINGS.get(service_key)
