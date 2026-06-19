@@ -88,7 +88,7 @@ export function ScanForm({ onSubmit, isScanning, className }) {
   const [portStart, setPortStart] = useState('1');
   const [portEnd, setPortEnd] = useState('1024');
   const [timeout, setTimeoutVal] = useState('1');
-  const [cveMode, setCveMode] = useState('full');
+  const [cveMode, setCveMode] = useState('quick');
   const [error, setError] = useState(null);
 
   function sanitizeNumericInput(value) {

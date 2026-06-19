@@ -208,7 +208,7 @@ def scan(
         help="Seconds to wait per port before marking filtered"
     ),
     cve_mode: str = typer.Option(
-        "full",
+        "quick",
         "--cve-mode", "-c",
         help="CVE lookup mode: skip, quick, full"
     ),
