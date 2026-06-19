@@ -5,10 +5,9 @@ from typing import Optional
 
 import sys
 import os
-# We go up two levels (scanner -> backend -> root) to import our models
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.scan_result import PortResult, PortState, ScanResult, Service
+from models.scan_result import PortResult, PortState, ScanResult, Service, CveMode
 
 from scanner.banner_grabber import grab_banner, _well_known_service
 
@@ -20,10 +19,9 @@ from vulns.cve_matcher import enrich_with_cves
 # --- Constants ---
 
 # Maximum simultaneous TCP connections
-MAX_CONCURRENT = 500 # we might lower it idk for now
+MAX_CONCURRENT = 500
 
 # How long to wait for a response before giving up (seconds)
-# filtered ports will wait this long
 DEFAULT_TIMEOUT = 1.0
 
 
@@ -36,46 +34,26 @@ async def scan_port(
     """
     Attempt a TCP connection to a single port.
     Returns a PortResult with state OPEN, CLOSED, or FILTERED.
-
-    The semaphore is passed in (not created here) so all port tasks
-    share the same concurrency limit across the entire scan.
     """
-
-    # Wait until a slot is free then proceed
-    # When this block exits the slot is released for the next waiting task
     async with semaphore:
         try:
-            # wraps a coroutine with a timeout
-            # If open_connection doesn't complete within timeout seconds,
-            # it raises asyncio.TimeoutError - which means FILTERED
             _, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port),
                 timeout=timeout
             )
 
-            # three-way handshake completed - port is OPEN
-            # Close the connection cleanly
-            # Sends RST/FIN to the server
             writer.close()
-
-            # ensures the OS fully releases the socket
-            # Without this we can leak file descriptors on long scans
             try:
                 await writer.wait_closed()
             except Exception:
-                pass  # Some systems don't support wait_closed cleanly
+                pass
 
             return PortResult(port=port, state=PortState.OPEN)
 
         except asyncio.TimeoutError:
-            # No response within timeout window
-            # A firewall is silently dropping our packets
             return PortResult(port=port, state=PortState.FILTERED)
 
         except (ConnectionRefusedError, OSError):
-            # ConnectionRefusedError = got RST back = port is CLOSED
-            # OSError catches other low-level network errors
-            # (unreachable host, network down, etc.)
             return PortResult(port=port, state=PortState.CLOSED)
 
 async def scan_host(
@@ -83,6 +61,7 @@ async def scan_host(
     port_start: int = 1,
     port_end: int = 1024,
     timeout: float = DEFAULT_TIMEOUT,
+    cve_mode: CveMode = CveMode.FULL,
     max_concurrent: int = MAX_CONCURRENT
 ) -> ScanResult:
     """
@@ -91,16 +70,12 @@ async def scan_host(
     """
     scan_id = str(uuid.uuid4())
     start_time = datetime.now()
-    print(f"[*] Starting scan of {target} - ports {port_start}-{port_end}")
+    print(f"[*] Starting scan of {target} - ports {port_start}-{port_end} "
+          f"(cve_mode={cve_mode.value})")
 
-    # Create ONE semaphore shared across all port scan tasks
-    # if each task created its own semaphore,
-    # the concurrency limit would have no effect
     semaphore = asyncio.Semaphore(max_concurrent)
 
     # --- OS Detection ---
-    # Run this first, concurrently with nothing else yet
-    # It's fast (single ping) so it doesn't slow down the scan
     print(f"[*] Attempting OS detection on {target}...")
     os_guess = await detect_os(target)
 
@@ -111,31 +86,24 @@ async def scan_host(
     else:
         print(f"[*] OS detection failed (host may block ICMP)")
 
-    # Build the list of all ports to scan
     ports = range(port_start, port_end + 1)
 
-    # Create a coroutine for every port (nothing doing anything yet)
     tasks = [
         scan_port(target, port, semaphore, timeout)
         for port in ports
     ]
 
-    # asyncio.gather fires all tasks concurrently and collects results
-    # The semaphore inside each task controls how many actually run at once
-    # return_exceptions=True means if one task crashes the others keep going
     results: list[PortResult] = await asyncio.gather(
         *tasks,
         return_exceptions=True
     )
 
-    # Filter out any exceptions that slipped through
     clean_results = [r for r in results if isinstance(r, PortResult)]
 
     end_time = datetime.now()
     open_ports = [r for r in clean_results if r.state == PortState.OPEN]
 
     # --- Banner grabbing ---
-    # Grab banners concurrently for each open port
     print(f"[*] Grabbing banners for {len(open_ports)} open ports...")
 
     banner_tasks = [
@@ -145,16 +113,12 @@ async def scan_host(
 
     banners = await asyncio.gather(*banner_tasks, return_exceptions=True)
 
-    # Attach banners to their port results
     for port_result, banner in zip(open_ports, banners):
         if isinstance(banner, Service):
             port_result.service = banner
             version_str = f" ({banner.version})" if banner.version else ""
             print(f"[+] Port {port_result.port}/tcp OPEN - {banner.name}{version_str}")
         else:
-            # Banner grab failed entirely (connection error, TLS failure, etc.)
-            # Fall back to well-known service name from port number
-            # so the frontend never shows a port with no service info at all
             port_result.service = Service(
                 name=_well_known_service(port_result.port),
                 raw_banner=None
@@ -162,7 +126,6 @@ async def scan_host(
             print(f"[+] Port {port_result.port}/tcp OPEN - "
                   f"{port_result.service.name} (no banner)")
 
-    # Print summary — this belongs outside the loop, not inside it
     print(f"[*] Scan complete in {(end_time - start_time).seconds}s - "
           f"{len(open_ports)} open ports found")
 
@@ -174,14 +137,11 @@ async def scan_host(
         ports_scanned=len(ports),
         open_ports=len(open_ports),
         os_guess=os_guess,
-        # Only return open and filtered ports — closed ports are noise
+        cve_mode=cve_mode,
         results=[r for r in clean_results if r.state != PortState.CLOSED]
     )
 
-    # Enrich open ports with CVE data from NVD
-    scan = await enrich_with_cves(scan)
-
-    # Update end time to include enrichment time
+    scan = await enrich_with_cves(scan, mode=cve_mode)
     scan.end_time = datetime.now()
 
     return scan
@@ -190,20 +150,21 @@ async def run_scan(
     target: str,
     port_start: int = 1,
     port_end: int = 1024,
-    timeout: float = DEFAULT_TIMEOUT
+    timeout: float = DEFAULT_TIMEOUT,
+    cve_mode: CveMode = CveMode.FULL,
 ) -> ScanResult:
     """
     Main entry point for running a full scan.
-    This is what the API and CLI will call.
-    Runs port scan -> banner grabbing → CVE enrichment.
+    Called by the API and CLI.
     """
-    # probably more usefull later idk
     return await scan_host(
         target=target,
         port_start=port_start,
         port_end=port_end,
-        timeout=timeout
+        timeout=timeout,
+        cve_mode=cve_mode,
     )
+
 
 # --- Direct execution for testing ---
 if __name__ == "__main__":

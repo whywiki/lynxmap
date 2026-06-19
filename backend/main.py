@@ -10,7 +10,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from models.scan_result import ScanRequest, ScanResult, PortState
+from models.scan_result import ScanRequest, ScanResult, PortState, CveMode
 from scanner.port_scanner import run_scan
 
 
@@ -29,8 +29,6 @@ app = FastAPI(
     version="0.1.0"
 )
 
-# CORS
-# browsers block cross-origin requests by default
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -43,14 +41,6 @@ app.add_middleware(
 # --- In-memory scan store ---
 # Key: scan_id (string UUID)
 # Value: dict with status and result
-#
-# Structure of each entry:
-# {
-#   "status": "pending" | "running" | "complete" | "error",
-#   "result": ScanResult | None,
-#   "error": str | None,
-#   "created_at": datetime
-# }
 
 scans: dict[str, dict[str, Any]] = {}
 
@@ -62,12 +52,11 @@ async def _run_scan_background(
     target: str,
     port_start: int,
     port_end: int,
-    timeout: float
+    timeout: float,
+    cve_mode: CveMode,
 ) -> None:
     """
     Runs the scan and updates the scans store when done.
-    This runs in the background - the HTTP request that triggered
-    it has already returned a scan_id to the client.
     """
     scans[scan_id]["status"] = "running"
 
@@ -76,7 +65,8 @@ async def _run_scan_background(
             target=target,
             port_start=port_start,
             port_end=port_end,
-            timeout=timeout
+            timeout=timeout,
+            cve_mode=cve_mode,
         )
         scans[scan_id]["status"] = "complete"
         scans[scan_id]["result"] = result
@@ -91,7 +81,6 @@ async def _run_scan_background(
 
 @app.get("/")
 async def root():
-    """Health check - confirms the API is running."""
     return {"status": "ok", "app": "LynxMap", "version": "0.1.0"}
 
 
@@ -101,17 +90,9 @@ async def create_scan(
     background_tasks: BackgroundTasks
 ):
     """
-    Kick off a new scan.
-
-    Returns immediately with a scan_id.
-    The scan runs in the background.
+    Kick off a new scan. Returns immediately with a scan_id.
     Poll GET /scan/{scan_id} for results.
-
-    202 Accepted means "I got your request and I'm working on it"
-    as opposed to 200 OK which means "here's your result right now"
     """
-
-    # Validate port range
     if request.port_range_start < 1 or request.port_range_end > 65535:
         raise HTTPException(
             status_code=422,
@@ -125,26 +106,22 @@ async def create_scan(
 
     scan_id = str(uuid.uuid4())
 
-    # Register scan in store before starting background task
-    # so GET /scan/{id} can return "pending" immediately
     scans[scan_id] = {
         "status": "pending",
         "result": None,
         "error": None,
-        "created_at": datetime.now().isoformat()
+        "created_at": datetime.now().isoformat(),
+        "cve_mode": request.cve_mode.value,
     }
 
-    # BackgroundTasks is FastAPI's built-in way to run something
-    # after the response has been sent
-    # We use asyncio.create_task instead because our scanner is
-    # async and BackgroundTasks works better with sync functions
     asyncio.create_task(
         _run_scan_background(
             scan_id=scan_id,
             target=request.target,
             port_start=request.port_range_start,
             port_end=request.port_range_end,
-            timeout=request.timeout
+            timeout=request.timeout,
+            cve_mode=request.cve_mode,
         )
     )
 
@@ -152,64 +129,44 @@ async def create_scan(
         "scan_id": scan_id,
         "status": "pending",
         "message": f"Scan started for {request.target}",
-        "poll_url": f"/scan/{scan_id}"
+        "poll_url": f"/scan/{scan_id}",
+        "cve_mode": request.cve_mode.value,
     }
 
 
 @app.get("/scan/{scan_id}")
 async def get_scan(scan_id: str):
-    """
-    Get the status and results of a scan by ID.
-
-    While running: returns status "running"
-    When complete: returns full ScanResult
-    On error: returns status "error" with message
-    """
-
     if scan_id not in scans:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Scan {scan_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
 
     scan = scans[scan_id]
 
     if scan["status"] == "complete":
-        return {
-            "status": "complete",
-            "result": scan["result"]
-        }
+        return {"status": "complete", "result": scan["result"]}
 
     if scan["status"] == "error":
-        return {
-            "status": "error",
-            "error": scan["error"]
-        }
+        return {"status": "error", "error": scan["error"]}
 
-    # Still pending or running
     return {
         "status": scan["status"],
         "scan_id": scan_id,
-        "created_at": scan["created_at"]
+        "created_at": scan["created_at"],
+        "cve_mode": scan.get("cve_mode", "full"),
     }
 
 
 @app.get("/scans")
 async def list_scans():
-    """
-    List all scans in the current session.
-    Returns summary info without full results.
-    """
     summary = []
 
     for scan_id, scan in scans.items():
         entry = {
             "scan_id": scan_id,
             "status": scan["status"],
-            "created_at": scan["created_at"]
+            "created_at": scan["created_at"],
+            "cve_mode": scan.get("cve_mode", "full"),
         }
 
-        # Add target and open port count if scan is complete
         if scan["status"] == "complete" and scan["result"]:
             result: ScanResult = scan["result"]
             entry["target"] = result.target
@@ -223,11 +180,6 @@ async def list_scans():
 
 @app.delete("/scan/{scan_id}", status_code=204)
 async def delete_scan(scan_id: str):
-    """
-    Remove a scan from the store.
-    Returns 204 No Content on success.
-    """
     if scan_id not in scans:
         raise HTTPException(status_code=404, detail="Scan not found")
-
     del scans[scan_id]

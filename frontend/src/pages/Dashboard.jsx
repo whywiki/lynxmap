@@ -5,11 +5,9 @@ import { ScanStatus } from '@/components/scan-status';
 import { ResultsView } from '@/components/results-view';
 import { startScan, getScan } from '@/api/scannerApi';
 
-// Poll interval in ms
 const POLL_MS = 2000;
 
 export default function Dashboard() {
-  // Local scan registry: scan_id → { status, target, port_range_start, port_range_end, ... }
   const [scans, setScans] = useState([]);
   const [activeScanId, setActiveScanId] = useState(null);
   const [showForm, setShowForm] = useState(true);
@@ -20,15 +18,12 @@ export default function Dashboard() {
   // eslint-disable-next-line no-unused-vars
   const isScanning = activeScan?.status === 'pending' || activeScan?.status === 'running';
 
-  // ---- Update single scan in list ----
   const updateScan = useCallback((scan_id, patch) => {
     setScans((prev) => prev.map((s) => (s.scan_id === scan_id ? { ...s, ...patch } : s)));
   }, []);
 
-  // ---- Poll until complete/error ----
   const pollScan = useCallback(
     (scan_id) => {
-      // Clear any existing poll
       if (pollRef.current) clearTimeout(pollRef.current);
 
       const tick = async () => {
@@ -36,26 +31,20 @@ export default function Dashboard() {
           const data = await getScan(scan_id);
 
           if (data.status === 'complete') {
-            // Merge result fields into our local entry
-            // Real API: data.result = full ScanResult object
             const result = data.result;
-            updateScan(scan_id, {
-              status: 'complete',
-              ...result,
-            });
+            updateScan(scan_id, { status: 'complete', ...result });
             setActiveScanId(scan_id);
             setShowForm(false);
-            return; // stop polling
+            return;
           }
 
           if (data.status === 'error') {
             updateScan(scan_id, { status: 'error', error: data.error });
             setActiveScanId(scan_id);
             setShowForm(false);
-            return; // stop polling
+            return;
           }
 
-          // Still pending/running - update status and schedule next poll
           updateScan(scan_id, { status: data.status });
           pollRef.current = setTimeout(tick, POLL_MS);
         } catch (err) {
@@ -68,7 +57,6 @@ export default function Dashboard() {
     [updateScan],
   );
 
-  // ---- Submit new scan ----
   const handleSubmit = useCallback(
     async (values) => {
       try {
@@ -77,6 +65,7 @@ export default function Dashboard() {
           values.port_start,
           values.port_end,
           values.timeout,
+          values.cve_mode, // <-- passed through from the form
         );
 
         const newEntry = {
@@ -86,6 +75,7 @@ export default function Dashboard() {
           port_range_start: values.port_start,
           port_range_end: values.port_end,
           timeout: values.timeout,
+          cve_mode: values.cve_mode,
           created_at: new Date().toISOString(),
         };
 
@@ -95,7 +85,6 @@ export default function Dashboard() {
 
         pollScan(data.scan_id);
       } catch (err) {
-        // If POST /scan itself fails, show form error (rare)
         console.error('Failed to start scan:', err);
         alert(`Failed to start scan: ${err.message}`);
       }
@@ -113,7 +102,6 @@ export default function Dashboard() {
     setShowForm(false);
   }, []);
 
-  // Cleanup poll on unmount
   useEffect(() => {
     return () => {
       if (pollRef.current) clearTimeout(pollRef.current);
@@ -122,7 +110,6 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
-      {/* Sidebar */}
       <ScanHistory
         scans={scans}
         activeScanId={activeScanId}
@@ -130,14 +117,12 @@ export default function Dashboard() {
         onNewScan={handleNewScan}
       />
 
-      {/* Main content */}
       <main className="flex-1 overflow-y-auto">
         <div
           className={
             showForm ? 'w-full px-8 py-10 space-y-8' : 'max-w-5xl mx-auto px-8 py-10 space-y-8'
           }
         >
-          {/* ── Idle / new-scan state ── */}
           {showForm && (
             <div className="space-y-8">
               <p className="text-[11px] font-mono uppercase tracking-[0.2em] text-muted-foreground/60">
@@ -157,10 +142,8 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* ── Active scan view ── */}
           {!showForm && displayedScan && (
             <div className="space-y-6">
-              {/* In-progress or error */}
               {(displayedScan.status === 'pending' ||
                 displayedScan.status === 'running' ||
                 displayedScan.status === 'error') && (
@@ -172,14 +155,13 @@ export default function Dashboard() {
                     {displayedScan.target}
                   </h1>
                   <p className="text-sm font-mono text-muted-foreground">
-                    ports {displayedScan.port_range_start}-{displayedScan.port_range_end} · port
-                    wait {displayedScan.timeout}s
+                    ports {displayedScan.port_range_start}-{displayedScan.port_range_end} - port
+                    wait {displayedScan.timeout}s - cve: {displayedScan.cve_mode}
                   </p>
                   <ScanStatus scan={displayedScan} />
                 </>
               )}
 
-              {/* Complete */}
               {displayedScan.status === 'complete' && (
                 <>
                   <p className="text-[11px] font-mono uppercase tracking-[0.2em] text-muted-foreground/60">
@@ -189,8 +171,8 @@ export default function Dashboard() {
                     {displayedScan.target}
                   </h1>
                   <p className="text-sm font-mono text-muted-foreground">
-                    ports {displayedScan.port_range_start}-{displayedScan.port_range_end} · port
-                    wait {displayedScan.timeout}s
+                    ports {displayedScan.port_range_start}-{displayedScan.port_range_end} - port
+                    wait {displayedScan.timeout}s - cve: {displayedScan.cve_mode}
                   </p>
                   <ResultsView scan={displayedScan} />
                 </>

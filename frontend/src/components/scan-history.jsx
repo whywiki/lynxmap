@@ -1,6 +1,7 @@
 import { Plus, Circle, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { CVE_MODES } from '@/components/scan-form';
 
 const STATUS_MAP = {
   pending: {
@@ -40,6 +41,21 @@ function StatusBadge({ status }) {
   );
 }
 
+function CveModeBadge({ mode }) {
+  const def = CVE_MODES.find((m) => m.value === mode);
+  if (!def) return null;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold font-mono tracking-wide',
+        def.badgeCls,
+      )}
+    >
+      {def.badge}
+    </span>
+  );
+}
+
 function formatTime(isoString) {
   if (!isoString) return '--:--:--';
   return new Date(isoString).toLocaleTimeString('en-US', {
@@ -57,7 +73,6 @@ export function ScanHistory({ scans, activeScanId, onSelect, onNewScan }) {
       <div className="px-4 py-4 border-b border-sidebar-border">
         <div className="flex items-center gap-2.5">
           <div className="size-8 rounded border border-border flex items-center justify-center bg-background">
-            {/* Pulse icon matching Image 2 */}
             <svg
               viewBox="0 0 24 24"
               fill="none"
@@ -71,7 +86,7 @@ export function ScanHistory({ scans, activeScanId, onSelect, onNewScan }) {
           <div>
             <p className="text-sm font-semibold text-sidebar-foreground leading-tight">LynxMap</p>
             <p className="text-[10px] font-mono text-muted-foreground tracking-wide">
-              v0.1.0 · SCANNER
+              v0.1.0 - SCANNER
             </p>
           </div>
         </div>
@@ -120,22 +135,32 @@ export function ScanHistory({ scans, activeScanId, onSelect, onNewScan }) {
               )}
               aria-current={isActive ? 'page' : undefined}
             >
+              {/* Target + status */}
               <div className="flex items-start justify-between gap-2 mb-1.5">
                 <span className="font-mono text-sm text-sidebar-foreground truncate leading-tight font-medium">
                   {scan.target}
                 </span>
                 <StatusBadge status={scan.status} />
               </div>
+
+              {/* Port range + time */}
               <div className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground">
                 <span>
                   {scan.port_range_start ?? scan.port_start}-{scan.port_range_end ?? scan.port_end}
                 </span>
-                <span className="text-border">·</span>
+                <span className="text-border">-</span>
                 <span>{formatTime(scan.created_at ?? scan.started_at)}</span>
                 {scan.status === 'complete' && (
                   <span className="ml-auto text-emerald-400 font-semibold">{openCount} open</span>
                 )}
               </div>
+
+              {/* CVE mode badge */}
+              {scan.cve_mode && (
+                <div className="mt-1.5">
+                  <CveModeBadge mode={scan.cve_mode} />
+                </div>
+              )}
             </button>
           );
         })}
