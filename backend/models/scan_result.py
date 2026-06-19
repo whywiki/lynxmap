@@ -20,6 +20,12 @@ class Severity(str, Enum):
     NONE = "NONE"
 
 
+class CveMode(str, Enum):
+    SKIP  = "skip"   # no NVD lookups at all
+    QUICK = "quick"  # one attempt, short delay, no retries
+    FULL  = "full"   # default: retries + full backoff
+
+
 # --- CVE ---
 
 class CVE(BaseModel):
@@ -66,6 +72,7 @@ class ScanResult(BaseModel):
     ports_scanned: int = 0              # how many ports we tried
     open_ports: int = 0                 # how many came back open
     os_guess: Optional[OSGuess] = None
+    cve_mode: CveMode = CveMode.FULL    # mode used for this scan
     results: list[PortResult] = Field(default_factory=list)
 
 
@@ -76,3 +83,4 @@ class ScanRequest(BaseModel):
     port_range_start: int = 1
     port_range_end: int = 1024           # default to well-known ports
     timeout: float = 1.0                 # seconds to wait per port
+    cve_mode: CveMode = CveMode.FULL    # controls NVD lookup behaviour

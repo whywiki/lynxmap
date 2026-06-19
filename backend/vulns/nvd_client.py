@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.scan_result import CVE, Severity
+from models.scan_result import CVE, Severity, CveMode
 from dotenv import load_dotenv
 
 
@@ -17,7 +17,6 @@ def _load_env_files() -> None:
     load_dotenv(project_root / 'backend' / '.env', override=False)
 
 
-# Load env files so os.environ can see NVD_API_KEY in both host and container runs
 _load_env_files()
 
 
@@ -25,145 +24,158 @@ _load_env_files()
 
 NVD_BASE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
-# How many results to request from NVD per query
 MAX_RESULTS = 20
 
-# Rate limiting - be polite to the API
-# Without key: 5 requests per 30s -> wait 6s between requests
-# With key:    50 requests per 30s -> wait 0.6s between requests
-REQUEST_DELAY = 0.6  # seconds between API calls
+# NVD rate limits (official):
+#   no key  -> 5 requests / 30s -> minimum 6s between requests
+#   with key -> 50 requests / 30s -> minimum 0.6s between requests
+#
+# We add a safety buffer: 7s without key, 0.8s with key.
+_API_KEY = os.environ.get("NVD_API_KEY", "")
+_BASE_DELAY = 0.8 if _API_KEY else 7.0
 
-# CPE vendor/product mappings for common services
-# Format: "Our service name" -> (vendor, product)
-# These match NVD's official CPE naming conventions
+
+# Per-mode settings
+# delay    - seconds to wait between NVD requests
+# retries  - how many times to retry a 503/429 before giving up
+# backoff  - base seconds for exponential backoff on retry
+# strategies - which lookup strategies to attempt, in order:
+#              "cpe"               - CPE-based version-specific query
+#              "keyword_versioned" - canonical name + cleaned version
+#              "keyword_name"      - canonical name only (broadest)
+
+_MODE_CONFIG: dict[CveMode, dict] = {
+    CveMode.SKIP: {},  # handled before any requests are made
+
+    CveMode.QUICK: {
+        "delay":      _BASE_DELAY,
+        "retries":    1,
+        "backoff":    5.0,
+        "strategies": ["cpe", "keyword_versioned"],
+        # quick: one shot per strategy, no name-only fallback
+    },
+
+    CveMode.FULL: {
+        "delay":      _BASE_DELAY,
+        "retries":    3,
+        "backoff":    10.0,
+        "strategies": ["cpe", "keyword_versioned", "keyword_name"],
+    },
+
+}
+
+
+# CPE vendor/product mappings.
+# Key: our internal service name lowercased.
+# Value: (nvd_vendor, nvd_product, nvd_canonical_keyword)
+#   nvd_canonical_keyword is what NVD actually calls the product in CVE text,
+#   used as the keyword fallback instead of our internal service name.
 CPE_MAPPINGS = {
-    "openssh":      ("openbsd",  "openssh"),
-    "apache httpd": ("apache",   "http_server"),
-    "nginx":        ("nginx",    "nginx"),
-    "mysql":        ("mysql",    "mysql"),
-    "postgresql":   ("postgresql", "postgresql"),
-    "proftpd":      ("proftpd", "proftpd"),
-    "vsftpd":       ("vsftpd",  "vsftpd"),
-    "microsoft iis":("microsoft", "internet_information_services"),
-    "samba":        ("samba",   "samba"),
-    "openssl":      ("openssl", "openssl"),
+    "openssh":             ("openbsd",      "openssh",                       "OpenSSH"),
+    "apache httpd":        ("apache",       "http_server",                   "Apache HTTP Server"),
+    "nginx":               ("nginx",        "nginx",                         "nginx"),
+    "mysql":               ("mysql",        "mysql",                         "MySQL"),
+    "mariadb":             ("mariadb",      "mariadb",                       "MariaDB"),
+    "postgresql":          ("postgresql",   "postgresql",                    "PostgreSQL"),
+    "proftpd":             ("proftpd",      "proftpd",                       "ProFTPD"),
+    "vsftpd":              ("vsftpd",       "vsftpd",                        "vsftpd"),
+    "microsoft iis":       ("microsoft",    "internet_information_services", "Microsoft IIS"),
+    "samba":               ("samba",        "samba",                         "Samba"),
+    "openssl":             ("openssl",      "openssl",                       "OpenSSL"),
+    "redis":               ("redis",        "redis",                         "Redis"),
+    "mongodb":             ("mongodb",      "mongodb",                       "MongoDB"),
+    "apache tomcat":       ("apache",       "tomcat",                        "Apache Tomcat"),
+    "dropbear ssh":        ("matt_johnston","dropbear_ssh",                  "Dropbear"),
+    "exim":                ("exim",         "exim",                          "Exim"),
+    "postfix":             ("wietse_venema","postfix",                       "Postfix"),
+    "dovecot imap":        ("dovecot",      "dovecot",                       "Dovecot"),
+    "dovecot pop3":        ("dovecot",      "dovecot",                       "Dovecot"),
+    "filezilla server":    ("filezilla-project","filezilla_server",          "FileZilla Server"),
+    "pure-ftpd":           ("pure-ftpd",    "pure-ftpd",                     "Pure-FTPd"),
+    "cups":                ("apple",        "cups",                          "CUPS"),
+    "elasticsearch":       ("elastic",      "elasticsearch",                 "Elasticsearch"),
+    "apache activemq":     ("apache",       "activemq",                      "Apache ActiveMQ"),
+    "isc bind":            ("isc",          "bind",                          "ISC BIND"),
+    "lighttpd":            ("lighttpd",     "lighttpd",                      "lighttpd"),
+    "mikrotik routeros":   ("mikrotik",     "routeros",                      "RouterOS"),
+    "vnc":                 ("realvnc",      "vnc",                           "VNC"),
 }
 
 
 # --- In-memory cache ---
-# Key: "ServiceName version" e.g. "OpenSSH 6.6.1p1"
-# Value: list of CVE objects
-# We also store a timestamp so we could expire old entries if needed
+# Key: "service_name_lower:version_or_unknown:mode"
+# Value: (list[CVE], timestamp)
+# Mode is part of the key so a QUICK miss doesn't block a later DEEP hit.
 
 _cache: dict[str, tuple[list[CVE], datetime]] = {}
-CACHE_TTL_HOURS = 24  # cache results for 24 hours
+CACHE_TTL_HOURS = 24
 
 
-def _cache_key(service_name: str, version: str | None) -> str:
-    """Build a consistent cache key from service name and version."""
-    return f"{service_name.lower()}:{version or 'unknown'}"
+def _cache_key(service_name: str, version: str | None, mode: CveMode) -> str:
+    return f"{service_name.lower()}:{version or 'unknown'}:{mode.value}"
 
 
 def _is_cache_valid(timestamp: datetime) -> bool:
-    """Check if a cached result is still fresh."""
     return datetime.now() - timestamp < timedelta(hours=CACHE_TTL_HOURS)
 
 
 def _parse_severity(score: float | None, severity_str: str | None) -> Severity:
-    """
-    Convert a CVSS score or severity string into our Severity enum.
-    NVD provides both - we prefer the string.
-    """
     if severity_str:
-        severity_str = severity_str.upper()
-        if severity_str in ("CRITICAL",):
-            return Severity.CRITICAL
-        elif severity_str in ("HIGH",):
-            return Severity.HIGH
-        elif severity_str in ("MEDIUM",):
-            return Severity.MEDIUM
-        elif severity_str in ("LOW",):
-            return Severity.LOW
+        s = severity_str.upper()
+        if s == "CRITICAL": return Severity.CRITICAL
+        if s == "HIGH":     return Severity.HIGH
+        if s == "MEDIUM":   return Severity.MEDIUM
+        if s == "LOW":      return Severity.LOW
 
-    # Fall back to score-based calculation
     if score is not None:
-        if score >= 9.0:
-            return Severity.CRITICAL
-        elif score >= 7.0:
-            return Severity.HIGH
-        elif score >= 4.0:
-            return Severity.MEDIUM
-        elif score > 0:
-            return Severity.LOW
+        if score >= 9.0: return Severity.CRITICAL
+        if score >= 7.0: return Severity.HIGH
+        if score >= 4.0: return Severity.MEDIUM
+        if score > 0:    return Severity.LOW
 
     return Severity.NONE
 
 
 def _parse_cvss_metrics(metrics: dict) -> tuple[float | None, Severity]:
     """
-    Extract CVSS score and severity from the metrics block.
-
-    NVD has multiple CVSS versions (v2, v3.0, v3.1, v4.0).
-    We prefer v3.1 > v3.0 > v4.0 > v2 in that order because
-    v3.1 is the most widely used standard right now.
+    Prefer v3.1 -> v3.0 -> v4.0 -> v2.
+    v4.0 is included now that NVD has started publishing it.
     """
-    score = None
-    severity = Severity.NONE
+    for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV40"):
+        entries = metrics.get(key, [])
+        if entries:
+            data = entries[0].get("cvssData", {})
+            score = data.get("baseScore")
+            severity = _parse_severity(score, data.get("baseSeverity"))
+            return score, severity
 
-    # Try CVSS v3.1 first
-    v31 = metrics.get("cvssMetricV31", [])
-    if v31:
-        data = v31[0].get("cvssData", {})
-        score = data.get("baseScore")
-        severity = _parse_severity(score, data.get("baseSeverity"))
-        return score, severity
-
-    # Fall back to v3.0
-    v30 = metrics.get("cvssMetricV30", [])
-    if v30:
-        data = v30[0].get("cvssData", {})
-        score = data.get("baseScore")
-        severity = _parse_severity(score, data.get("baseSeverity"))
-        return score, severity
-
-    # Fall back to v2
+    # v2 has no baseSeverity string
     v2 = metrics.get("cvssMetricV2", [])
     if v2:
         data = v2[0].get("cvssData", {})
         score = data.get("baseScore")
-        severity = _parse_severity(score, None)  # v2 has no severity string
-        return score, severity
+        return score, _parse_severity(score, None)
 
     return None, Severity.NONE
 
 
 def _parse_cve_item(item: dict) -> CVE | None:
-    """
-    Parse a single CVE item from the NVD API response into our CVE model.
-    Returns None if the item is malformed or missing critical fields.
-    """
     try:
         cve_data = item.get("cve", {})
-
         cve_id = cve_data.get("id", "")
         if not cve_id:
             return None
 
-        # Get English description
         descriptions = cve_data.get("descriptions", [])
         description = next(
             (d["value"] for d in descriptions if d.get("lang") == "en"),
             "No description available"
         )
-
-        # Truncate very long descriptions
         if len(description) > 500:
             description = description[:497] + "..."
 
-        # Parse CVSS metrics
         metrics = cve_data.get("metrics", {})
         cvss_score, severity = _parse_cvss_metrics(metrics)
-
         published = cve_data.get("published", None)
 
         return CVE(
@@ -173,131 +185,165 @@ def _parse_cve_item(item: dict) -> CVE | None:
             cvss_score=cvss_score,
             published_date=published
         )
-
     except Exception:
         return None
+
+
+def _clean_version(version: str) -> str:
+    """
+    Strip OS-packaging suffixes so CPE matching works.
+
+    Examples:
+      "8.9p1 Ubuntu-3ubuntu0.6"  -> "8.9p1"
+      "2.4.7+dfsg"               -> "2.4.7"
+      "10.6.11-MariaDB-2~ubuntu" -> "10.6.11"
+    """
+    version = version.split()[0]
+    for delim in ("+", "~", "-"):
+        version = version.split(delim)[0]
+    return version.strip()
+
+
+async def _do_nvd_request(
+    params: dict,
+    headers: dict,
+    retries: int,
+    backoff: float,
+) -> list[CVE]:
+    """
+    Execute one NVD API request with exponential-backoff retry on 503/429.
+    Returns parsed CVEs, or [] on permanent failure.
+    """
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(
+                    NVD_BASE_URL,
+                    params=params,
+                    headers=headers
+                )
+
+            if response.status_code in (503, 429):
+                wait = backoff * (2 ** attempt)
+                print(f"  [nvd] HTTP {response.status_code} - "
+                      f"backing off {wait:.0f}s (attempt {attempt + 1}/{retries})")
+                await asyncio.sleep(wait)
+                continue
+
+            response.raise_for_status()
+            data = response.json()
+
+        except httpx.HTTPStatusError as e:
+            print(f"  [nvd] HTTP error {e.response.status_code}")
+            return []
+        except httpx.RequestError as e:
+            print(f"  [nvd] Request failed: {e}")
+            if attempt < retries - 1:
+                await asyncio.sleep(backoff)
+                continue
+            return []
+        except Exception as e:
+            print(f"  [nvd] Unexpected error: {e}")
+            return []
+
+        vulnerabilities = data.get("vulnerabilities", [])
+        return [c for item in vulnerabilities if (c := _parse_cve_item(item))]
+
+    print(f"  [nvd] All {retries} attempts failed, giving up")
+    return []
+
 
 async def fetch_cves_for_service(
     service_name: str,
     version: str | None,
-    delay: float = REQUEST_DELAY
+    mode: CveMode = CveMode.FULL,
 ) -> list[CVE]:
     """
-    Query the NVD API for CVEs affecting a given service and version.
+    Query NVD for CVEs affecting a given service + version.
 
-    Strategy:
-    1. Try CPE-based query first (version-aware, most accurate)
-    2. Fall back to keyword search if CPE returns nothing
+    Behaviour is controlled by `mode`:
+      SKIP  - returns [] immediately, no network calls
+      QUICK - CPE + versioned keyword, single attempt, short backoff
+      FULL  - CPE + versioned keyword + name-only fallback, 3 retries (default)
 
-    Results are cached to avoid redundant API calls.
+    Results are cached per (service, version, mode) for CACHE_TTL_HOURS.
+    Empty results are also cached to avoid re-hammering on known misses.
     """
+    if mode == CveMode.SKIP:
+        return []
 
-    key = _cache_key(service_name, version)
+    key = _cache_key(service_name, version, mode)
 
-    # Check cache first
     if key in _cache:
         cached_cves, timestamp = _cache[key]
         if _is_cache_valid(timestamp):
-            print(f"  [cache] {service_name} {version or ''} — "
-                  f"{len(cached_cves)} CVEs (cached)")
+            print(f"  [cache] {service_name} {version or ''} ({mode.value}) -> "
+                  f"{len(cached_cves)} CVEs")
             return cached_cves
 
+    cfg = _MODE_CONFIG[mode]
+    delay: float       = cfg["delay"]
+    retries: int       = cfg["retries"]
+    backoff: float     = cfg["backoff"]
+    strategies: list   = cfg["strategies"]
+
+    # Always wait before the first real request to respect rate limits
     await asyncio.sleep(delay)
 
     api_key = os.environ.get("NVD_API_KEY", "")
     headers = {"apiKey": api_key} if api_key else {}
 
-    cves = []
-
-    # --- Strategy 1: CPE query ---
     service_key = service_name.lower()
-    if version and service_key in CPE_MAPPINGS:
-        vendor, product = CPE_MAPPINGS[service_key]
+    mapping = CPE_MAPPINGS.get(service_key)
+    canonical_name = mapping[2] if mapping else service_name
 
-        # Clean version — strip ubuntu/debian packaging suffixes
-        # "6.6.1p1" stays as is, "2.4.7+dfsg" → "2.4.7"
-        clean_version = version.split("+")[0].split("~")[0]
+    cves: list[CVE] = []
 
-        cpe_name = f"cpe:2.3:a:{vendor}:{product}:{clean_version}:*:*:*:*:*:*:*"
+    for strategy in strategies:
+        if cves:
+            break  # stop as soon as we get a hit
 
-        print(f"  [nvd] CPE query: '{cpe_name}'")
+        if strategy == "cpe":
+            if not (version and mapping):
+                continue
+            vendor, product, _ = mapping
+            clean_ver = _clean_version(version)
+            cpe_name = f"cpe:2.3:a:{vendor}:{product}:{clean_ver}:*:*:*:*:*:*:*"
+            print(f"  [nvd:{mode.value}] CPE query: '{cpe_name}'")
+            cves = await _do_nvd_request(
+                {"cpeName": cpe_name, "resultsPerPage": MAX_RESULTS},
+                headers, retries, backoff
+            )
+            print(f"  [nvd:{mode.value}] CPE found {len(cves)} CVEs")
 
-        params = {
-            "cpeName": cpe_name,
-            "resultsPerPage": MAX_RESULTS,
-        }
+        elif strategy == "keyword_versioned":
+            if not version:
+                continue
+            clean_ver = _clean_version(version)
+            query = f"{canonical_name} {clean_ver}"
+            print(f"  [nvd:{mode.value}] Keyword (versioned): '{query}'")
+            await asyncio.sleep(delay)
+            cves = await _do_nvd_request(
+                {"keywordSearch": query, "resultsPerPage": MAX_RESULTS},
+                headers, retries, backoff
+            )
+            print(f"  [nvd:{mode.value}] Keyword (versioned) found {len(cves)} CVEs")
 
-        cves = await _do_nvd_request(params, headers)
-        print(f"  [nvd] CPE found {len(cves)} CVEs")
+        elif strategy == "keyword_name":
+            print(f"  [nvd:{mode.value}] Keyword (name only): '{canonical_name}'")
+            await asyncio.sleep(delay)
+            cves = await _do_nvd_request(
+                {"keywordSearch": canonical_name, "resultsPerPage": MAX_RESULTS},
+                headers, retries, backoff
+            )
+            print(f"  [nvd:{mode.value}] Keyword (name only) found {len(cves)} CVEs")
 
-    # --- Strategy 2: Keyword fallback ---
-    # Triggers if CPE found nothing OR service has no CPE mapping
-    if not cves:
-        if version:
-            clean_version = version.split("p")[0].split("-")[0].split("+")[0]
-            query = f"{service_name} {clean_version}"
-        else:
-            query = service_name
-
-        print(f"  [nvd] Keyword fallback: '{query}'")
-
-        params = {
-            "keywordSearch": query,
-            "resultsPerPage": MAX_RESULTS,
-        }
-
-        await asyncio.sleep(delay)  # extra delay for second request
-        cves = await _do_nvd_request(params, headers)
-        print(f"  [nvd] Keyword found {len(cves)} CVEs")
-
-    # Sort by severity — CRITICAL first
+    # Sort: CRITICAL first
     severity_order = {
-        Severity.CRITICAL: 0,
-        Severity.HIGH: 1,
-        Severity.MEDIUM: 2,
-        Severity.LOW: 3,
-        Severity.NONE: 4
+        Severity.CRITICAL: 0, Severity.HIGH: 1,
+        Severity.MEDIUM: 2,   Severity.LOW: 3, Severity.NONE: 4
     }
     cves.sort(key=lambda c: severity_order.get(c.severity, 5))
 
     _cache[key] = (cves, datetime.now())
-    return cves
-
-
-async def _do_nvd_request(
-    params: dict,
-    headers: dict
-) -> list[CVE]:
-    """
-    Execute a single NVD API request and return parsed CVEs.
-    Extracted so both CPE and keyword strategies share the same logic.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(
-                NVD_BASE_URL,
-                params=params,
-                headers=headers
-            )
-            response.raise_for_status()
-            data = response.json()
-
-    except httpx.HTTPStatusError as e:
-        print(f"  [nvd] HTTP error {e.response.status_code}")
-        return []
-    except httpx.RequestError as e:
-        print(f"  [nvd] Request failed: {e}")
-        return []
-    except Exception as e:
-        print(f"  [nvd] Unexpected error: {e}")
-        return []
-
-    vulnerabilities = data.get("vulnerabilities", [])
-    cves = []
-
-    for item in vulnerabilities:
-        cve = _parse_cve_item(item)
-        if cve:
-            cves.append(cve)
-
     return cves
